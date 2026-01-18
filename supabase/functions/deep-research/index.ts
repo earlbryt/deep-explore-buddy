@@ -17,6 +17,13 @@ interface ResearchStep {
   data?: unknown;
 }
 
+// Truncate text to approximate token count (rough estimate: 4 chars = 1 token)
+function truncateToTokens(text: string, maxTokens: number): string {
+  const maxChars = maxTokens * 4;
+  if (text.length <= maxChars) return text;
+  return text.substring(0, maxChars) + '...';
+}
+
 // Tavily search function
 async function tavilySearch(query: string, apiKey: string): Promise<SearchResult[]> {
   const response = await fetch('https://api.tavily.com/search', {
@@ -27,10 +34,10 @@ async function tavilySearch(query: string, apiKey: string): Promise<SearchResult
     body: JSON.stringify({
       api_key: apiKey,
       query,
-      search_depth: 'advanced',
-      max_results: 5,
+      search_depth: 'basic', // Changed from 'advanced' to reduce content
+      max_results: 3, // Reduced from 5
       include_answer: false,
-      include_raw_content: true,
+      include_raw_content: false, // Disabled raw content to reduce size
     }),
   });
 
@@ -41,10 +48,10 @@ async function tavilySearch(query: string, apiKey: string): Promise<SearchResult
   }
 
   const data = await response.json();
-  return data.results.map((r: { title: string; url: string; content: string; raw_content?: string }) => ({
+  return data.results.map((r: { title: string; url: string; content: string }) => ({
     title: r.title,
     url: r.url,
-    content: r.raw_content || r.content,
+    content: truncateToTokens(r.content, 300), // Limit each source to ~300 tokens
   }));
 }
 
@@ -76,21 +83,16 @@ async function callGroq(messages: Array<{ role: string; content: string }>, apiK
 
 // Generate search queries based on the research topic
 async function generateSearchQueries(topic: string, groqKey: string): Promise<string[]> {
-  const prompt = `You are a research planning assistant. Given a research topic, generate 3-5 focused search queries that would help gather comprehensive information.
-
-Topic: "${topic}"
-
-Return ONLY a JSON array of search query strings, nothing else. Example:
-["query 1", "query 2", "query 3"]`;
+  const prompt = `Generate 3 focused search queries for: "${topic}". Return ONLY a JSON array like: ["query 1", "query 2", "query 3"]`;
 
   const response = await callGroq([
-    { role: 'system', content: 'You are a research planning assistant. Return only valid JSON.' },
+    { role: 'system', content: 'Return only valid JSON array of strings.' },
     { role: 'user', content: prompt }
   ], groqKey);
 
   try {
     const queries = JSON.parse(response);
-    return Array.isArray(queries) ? queries.slice(0, 5) : [topic];
+    return Array.isArray(queries) ? queries.slice(0, 3) : [topic]; // Limit to 3 queries
   } catch {
     console.error('Failed to parse queries, using topic as query');
     return [topic];
@@ -99,30 +101,22 @@ Return ONLY a JSON array of search query strings, nothing else. Example:
 
 // Analyze and synthesize research findings
 async function synthesizeFindings(topic: string, searchResults: SearchResult[], groqKey: string): Promise<string> {
-  const sourcesText = searchResults.map((r, i) => 
-    `[Source ${i + 1}] ${r.title}\nURL: ${r.url}\nContent: ${r.content.substring(0, 2000)}...`
-  ).join('\n\n---\n\n');
+  // Limit to top 6 sources and truncate content aggressively
+  const limitedResults = searchResults.slice(0, 6);
+  const sourcesText = limitedResults.map((r, i) => 
+    `[${i + 1}] ${r.title}\n${r.url}\n${truncateToTokens(r.content, 200)}`
+  ).join('\n\n');
 
-  const prompt = `You are a deep research analyst. Based on the following sources, create a comprehensive research report on the topic.
+  // Keep prompt concise to stay under token limits
+  const prompt = `Research topic: ${topic}
 
-## Research Topic
-${topic}
-
-## Sources
+Sources:
 ${sourcesText}
 
-## Instructions
-Create a well-structured research report with:
-1. **Executive Summary** - Brief overview of key findings
-2. **Key Insights** - Main discoveries from the research
-3. **Detailed Analysis** - In-depth examination of the topic
-4. **Conclusions** - Summary and implications
-5. **Sources** - List the sources used with their URLs
-
-Use markdown formatting. Be thorough, analytical, and cite sources where relevant.`;
+Create a research report with: Executive Summary, Key Insights, Analysis, Conclusions, and Sources list. Use markdown.`;
 
   return await callGroq([
-    { role: 'system', content: 'You are an expert research analyst who creates comprehensive, well-cited research reports.' },
+    { role: 'system', content: 'Expert research analyst. Create concise, well-cited reports.' },
     { role: 'user', content: prompt }
   ], groqKey);
 }
