@@ -1,37 +1,47 @@
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { ResearchInput } from "@/components/ResearchInput";
 import { ResearchProgress } from "@/components/ResearchProgress";
 import { ResearchReport } from "@/components/ResearchReport";
 import { useToast } from "@/hooks/use-toast";
-import { Brain, Zap, Globe } from "lucide-react";
+import { Brain, Zap, Globe, Clock, Search } from "lucide-react";
 
-interface ResearchStep {
-  type: 'planning' | 'searching' | 'analyzing' | 'synthesizing' | 'complete';
+interface StreamEvent {
+  type: 'thinking' | 'searching' | 'reading' | 'reflecting' | 'knowledge' | 'gap' | 'progress' | 'answer' | 'error';
   message: string;
   data?: unknown;
+  step?: number;
+  totalSteps?: number;
 }
 
 interface ReportData {
   report: string;
-  sourcesCount: number;
-  queriesUsed: number;
+  stats: {
+    totalSteps: number;
+    knowledgeItems: number;
+    urlsVisited: number;
+    searchesPerformed: number;
+    gapsInvestigated: number;
+  };
 }
 
 type AppState = 'idle' | 'researching' | 'complete';
 
 export default function Index() {
   const [appState, setAppState] = useState<AppState>('idle');
-  const [steps, setSteps] = useState<ResearchStep[]>([]);
-  const [currentPhase, setCurrentPhase] = useState<string>('planning');
+  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(25);
   const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [researchTopic, setResearchTopic] = useState('');
   const { toast } = useToast();
 
   const handleResearch = useCallback(async (topic: string) => {
     setAppState('researching');
-    setSteps([]);
-    setCurrentPhase('planning');
+    setEvents([]);
+    setCurrentStep(0);
+    setTotalSteps(25);
     setReportData(null);
+    setResearchTopic(topic);
 
     try {
       const response = await fetch(
@@ -42,7 +52,7 @@ export default function Index() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ topic, stream: true }),
+          body: JSON.stringify({ topic }),
         }
       );
 
@@ -67,21 +77,30 @@ export default function Index() {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
-              const data = JSON.parse(line.slice(6)) as ResearchStep;
-              setSteps(prev => [...prev, data]);
-              setCurrentPhase(data.type);
+              const event = JSON.parse(line.slice(6)) as StreamEvent;
+              setEvents(prev => [...prev, event]);
+              
+              if (event.step) setCurrentStep(event.step);
+              if (event.totalSteps) setTotalSteps(event.totalSteps);
 
-              if (data.type === 'complete' && data.data) {
-                const completeData = data.data as { report: string; sourcesCount: number; queriesUsed: number };
+              if (event.type === 'answer' && event.data) {
+                const answerData = event.data as { report: string; stats: ReportData['stats'] };
                 setReportData({
-                  report: completeData.report,
-                  sourcesCount: completeData.sourcesCount,
-                  queriesUsed: completeData.queriesUsed,
+                  report: answerData.report,
+                  stats: answerData.stats,
                 });
                 setAppState('complete');
               }
+
+              if (event.type === 'error') {
+                throw new Error(event.message);
+              }
             } catch (e) {
-              console.error('Failed to parse SSE data:', e);
+              if (e instanceof SyntaxError) {
+                console.error('Failed to parse SSE data:', e);
+              } else {
+                throw e;
+              }
             }
           }
         }
@@ -99,9 +118,10 @@ export default function Index() {
 
   const handleNewResearch = () => {
     setAppState('idle');
-    setSteps([]);
-    setCurrentPhase('planning');
+    setEvents([]);
+    setCurrentStep(0);
     setReportData(null);
+    setResearchTopic('');
   };
 
   return (
@@ -126,7 +146,7 @@ export default function Index() {
                     DEEP<span className="text-primary">RESEARCH</span>
                   </h1>
                   <p className="text-xs text-muted-foreground font-mono">
-                    AI-Powered Research Agent
+                    Multi-Step Iterative Research Agent
                   </p>
                 </div>
               </div>
@@ -138,7 +158,7 @@ export default function Index() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Globe className="w-3 h-3 text-primary" />
-                  <span>Tavily Search</span>
+                  <span>Tavily Deep Search</span>
                 </div>
               </div>
             </div>
@@ -150,15 +170,16 @@ export default function Index() {
           {appState === 'idle' && (
             <div className="space-y-12">
               {/* Hero section */}
-              <div className="text-center space-y-4 max-w-2xl mx-auto">
+              <div className="text-center space-y-4 max-w-3xl mx-auto">
                 <h2 className="text-4xl sm:text-5xl font-bold">
                   <span className="text-gradient-primary glow-text">Deep Research</span>
                   <br />
-                  <span className="text-foreground">Agent</span>
+                  <span className="text-foreground">Like ChatGPT & Grok</span>
                 </h2>
                 <p className="text-muted-foreground text-lg">
-                  Enter any topic and let our AI conduct comprehensive web research,
-                  analyze multiple sources, and synthesize a detailed report.
+                  Our AI agent conducts <strong className="text-primary">iterative, multi-step research</strong> — 
+                  searching, reading sources, identifying knowledge gaps, and reasoning through sub-questions 
+                  until it builds comprehensive understanding. Takes 2-5 minutes for thorough research.
                 </p>
               </div>
 
@@ -166,32 +187,54 @@ export default function Index() {
               <ResearchInput onSubmit={handleResearch} isLoading={false} />
 
               {/* Features */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-16">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-16">
                 {[
                   {
                     icon: Brain,
-                    title: "Intelligent Planning",
-                    description: "AI generates optimal search queries based on your topic"
+                    title: "Iterative Reasoning",
+                    description: "Loops through search→read→reason until comprehensive"
+                  },
+                  {
+                    icon: Search,
+                    title: "Multi-Query Search",
+                    description: "Generates and executes dozens of targeted search queries"
                   },
                   {
                     icon: Globe,
-                    title: "Multi-Source Search",
-                    description: "Searches and fetches content from multiple web sources"
+                    title: "Deep Source Reading",
+                    description: "Extracts and analyzes full content from multiple sources"
                   },
                   {
-                    icon: Zap,
-                    title: "Deep Synthesis",
-                    description: "Llama 3.3 70B analyzes and synthesizes comprehensive reports"
+                    icon: Clock,
+                    title: "Gap Analysis",
+                    description: "Identifies knowledge gaps and creates sub-questions"
                   }
                 ].map((feature, i) => (
-                  <div key={i} className="research-card p-6 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mx-auto">
-                      <feature.icon className="w-6 h-6 text-primary" />
+                  <div key={i} className="research-card p-5 text-center space-y-2">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mx-auto">
+                      <feature.icon className="w-5 h-5 text-primary" />
                     </div>
-                    <h3 className="font-semibold text-foreground">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground">{feature.description}</p>
+                    <h3 className="font-semibold text-foreground text-sm">{feature.title}</h3>
+                    <p className="text-xs text-muted-foreground">{feature.description}</p>
                   </div>
                 ))}
+              </div>
+
+              {/* How it works */}
+              <div className="max-w-3xl mx-auto mt-12">
+                <h3 className="text-lg font-semibold text-center mb-6 text-muted-foreground">
+                  How Deep Research Works
+                </h3>
+                <div className="flex items-center justify-center gap-2 text-xs font-mono flex-wrap">
+                  {['Search Web', '→', 'Read Sources', '→', 'Identify Gaps', '→', 'Research Gaps', '→', 'Loop Until Complete', '→', 'Synthesize Report'].map((step, i) => (
+                    <span 
+                      key={i} 
+                      className={step === '→' ? 'text-muted-foreground' : 'px-3 py-1.5 bg-muted rounded-full text-foreground'}
+                    >
+                      {step}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -200,13 +243,17 @@ export default function Index() {
             <div className="space-y-8">
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-foreground mb-2">
-                  Research in Progress
+                  Researching: <span className="text-primary">{researchTopic}</span>
                 </h2>
                 <p className="text-muted-foreground">
-                  Our AI agent is conducting deep research on your topic...
+                  AI agent is conducting deep, iterative research. This may take 2-5 minutes...
                 </p>
               </div>
-              <ResearchProgress steps={steps} currentPhase={currentPhase} />
+              <ResearchProgress 
+                events={events} 
+                currentStep={currentStep} 
+                totalSteps={totalSteps} 
+              />
             </div>
           )}
 
@@ -214,16 +261,16 @@ export default function Index() {
             <div className="space-y-8">
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-primary mb-2 glow-text">
-                  ✓ Research Complete
+                  ✓ Deep Research Complete
                 </h2>
                 <p className="text-muted-foreground">
-                  Your comprehensive research report is ready
+                  Completed in {reportData.stats.totalSteps} steps • {reportData.stats.knowledgeItems} findings • {reportData.stats.urlsVisited} sources analyzed
                 </p>
               </div>
               <ResearchReport
                 report={reportData.report}
-                sourcesCount={reportData.sourcesCount}
-                queriesUsed={reportData.queriesUsed}
+                sourcesCount={reportData.stats.urlsVisited}
+                queriesUsed={reportData.stats.searchesPerformed}
                 onNewResearch={handleNewResearch}
               />
             </div>
@@ -237,7 +284,7 @@ export default function Index() {
               <span>Powered by</span>
               <span className="text-primary">Groq + Tavily</span>
               <span>•</span>
-              <span>Deep Research Agent v1.0</span>
+              <span>Iterative Deep Research Agent v2.0</span>
             </div>
           </div>
         </footer>
