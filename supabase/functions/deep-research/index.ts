@@ -134,15 +134,15 @@ async function readUrl(url: string, apiKey: string): Promise<string | null> {
   }
 }
 
-// ============== LLM CALLS (Groq) ==============
+// ============== LLM CALLS (Lovable AI Gateway) ==============
 
 async function callLLM(
   messages: Array<{ role: string; content: string }>,
-  groqKey: string,
+  apiKey: string,
   jsonMode: boolean = false
 ): Promise<string> {
   const body: Record<string, unknown> = {
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b',
     messages,
     temperature: 0.3,
     max_tokens: 4096,
@@ -152,10 +152,10 @@ async function callLLM(
     body.response_format = { type: 'json_object' };
   }
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${groqKey}`,
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -163,7 +163,7 @@ async function callLLM(
 
   if (!response.ok) {
     const error = await response.text();
-    console.error('Groq API error:', error);
+    console.error('Lovable AI Gateway error:', error);
     throw new Error(`LLM API failed: ${response.status}`);
   }
 
@@ -322,10 +322,10 @@ serve(async (req) => {
   }
 
   try {
-    const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     const TAVILY_API_KEY = Deno.env.get('TAVILY_API_KEY');
 
-    if (!GROQ_API_KEY || !TAVILY_API_KEY) {
+    if (!LOVABLE_API_KEY || !TAVILY_API_KEY) {
       return new Response(
         JSON.stringify({ error: 'Missing API keys' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -403,7 +403,7 @@ serve(async (req) => {
             }
 
             // Get agent's decision
-            const action = await getAgentAction(state, availableUrls.filter(u => !state.visitedUrls.has(u)), GROQ_API_KEY);
+            const action = await getAgentAction(state, availableUrls.filter(u => !state.visitedUrls.has(u)), LOVABLE_API_KEY);
 
             sendEvent({
               type: 'thinking',
@@ -531,7 +531,7 @@ serve(async (req) => {
               });
 
               // Generate final report
-              const report = await synthesizeReport(topic, state.knowledge, GROQ_API_KEY);
+              const report = await synthesizeReport(topic, state.knowledge, LOVABLE_API_KEY);
 
               sendEvent({
                 type: 'answer',
@@ -564,7 +564,7 @@ serve(async (req) => {
             step: state.step
           });
 
-          const report = await synthesizeReport(topic, state.knowledge, GROQ_API_KEY);
+          const report = await synthesizeReport(topic, state.knowledge, LOVABLE_API_KEY);
 
           sendEvent({
             type: 'answer',
